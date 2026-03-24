@@ -67,6 +67,7 @@ COPY _public ./_public
 COPY main.py ./
 COPY scripts ./scripts
 
+RUN chmod 755 ./scripts/*.sh
 RUN mkdir -p /app/data /app/logs \
     && chmod +x /app/scripts/entrypoint.sh
 
