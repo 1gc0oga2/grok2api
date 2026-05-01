@@ -142,6 +142,7 @@ class ImageEditService:
                     )
 
                 images_out = await self._collect_images(
+                    model_info=model_info,
                     token=current_token,
                     prompt=prompt,
                     n=n,
@@ -208,6 +209,7 @@ class ImageEditService:
     async def _collect_images(
         self,
         *,
+        model_info: Any = None,
         token: str,
         prompt: str,
         n: int,
@@ -220,7 +222,7 @@ class ImageEditService:
 
         async def _call_edit():
             edit_overrides = self._build_request_overrides(per_call)
-            edit_overrides["modeId"] = self._app_chat_mode_id()
+            edit_overrides["modeId"] = self._app_chat_mode_id(model_info)
             edit_overrides["disableMemory"] = False
             edit_overrides["temporary"] = False
             response = await GrokChatService().chat(
