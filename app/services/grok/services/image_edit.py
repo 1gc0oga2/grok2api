@@ -34,6 +34,7 @@ from app.services.grok.utils.response import make_response_id, make_chat_chunk, 
 from app.services.grok.services.chat import GrokChatService
 from app.services.grok.utils.stream import wrap_stream_with_usage
 from app.services.token import EffortType
+from app.services.reverse.utils.debug_logging import new_debug_pair_id, write_debug_text
 
 _EDIT_UPSTREAM_MODEL = "grok-4"
 _EDIT_UPSTREAM_MODE = "MODEL_MODE_AUTO"
@@ -47,6 +48,12 @@ class ImageEditResult:
 
 class ImageEditService:
     """Image edit orchestration service."""
+
+    @staticmethod
+    def _app_chat_mode_id(model_info: Any = None) -> str:
+        if getattr(model_info, "model_id", None) == "grok-imagine-1.0-edit":
+            return "fast"
+        return "auto"
 
     @staticmethod
     def _build_request_overrides(n: int) -> Dict[str, Any]:
@@ -102,7 +109,7 @@ class ImageEditService:
                     "googleDriveSearch": False,
                 }
                 request_overrides = self._build_request_overrides(n)
-                request_overrides["modeId"] = "auto"
+                request_overrides["modeId"] = self._app_chat_mode_id(model_info)
                 request_overrides["disableMemory"] = False
                 request_overrides["temporary"] = False
 
@@ -213,7 +220,7 @@ class ImageEditService:
 
         async def _call_edit():
             edit_overrides = self._build_request_overrides(per_call)
-            edit_overrides["modeId"] = "auto"
+            edit_overrides["modeId"] = self._app_chat_mode_id()
             edit_overrides["disableMemory"] = False
             edit_overrides["temporary"] = False
             response = await GrokChatService().chat(
@@ -525,6 +532,8 @@ class ImageCollectProcessor(BaseProcessor):
     async def process(self, response: AsyncIterable[bytes]) -> List[str]:
         """Process and collect images."""
         images = []
+        raw_lines: List[str] = []
+        debug_pair_id = new_debug_pair_id()
         idle_timeout = get_config("image.stream_timeout")
 
         try:
@@ -532,6 +541,7 @@ class ImageCollectProcessor(BaseProcessor):
                 line = _normalize_line(line)
                 if not line:
                     continue
+                raw_lines.append(line)
                 try:
                     data = orjson.loads(line)
                 except orjson.JSONDecodeError:
@@ -615,6 +625,8 @@ class ImageCollectProcessor(BaseProcessor):
                 extra={"error_type": type(e).__name__},
             )
         finally:
+            if not images and raw_lines:
+                write_debug_text(debug_pair_id, "stream", "\n".join(raw_lines))
             await self.close()
 
         return images
