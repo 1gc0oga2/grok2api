@@ -20,6 +20,11 @@ CHAT_API = "https://grok.com/rest/app-chat/conversations/new"
 _LAST_PROXY_LOG_STATE: tuple[str, str] | None = None
 
 from app.services.reverse.utils.cf_refresh import trigger_cf_refresh_on_403 as _trigger_cf_refresh_on_403
+from app.services.reverse.utils.debug_logging import (
+    new_debug_pair_id,
+    redact,
+    write_debug_json,
+)
 
 
 def _normalize_chat_proxy(proxy_url: str) -> str:
@@ -207,6 +212,7 @@ class AppChatReverse:
             Any: The response from the request.
         """
         try:
+            debug_pair_id = new_debug_pair_id()
             # Get proxies
             base_proxy = get_config("proxy.base_proxy_url")
             proxy = None
@@ -250,6 +256,18 @@ class AppChatReverse:
             logger.debug(
                 "AppChatReverse final Grok params (redacted)",
                 extra={"grok_payload": payload_summary},
+            )
+            write_debug_json(
+                debug_pair_id,
+                "request",
+                {
+                    "provider": "grok-app-chat",
+                    "method": "POST",
+                    "url": CHAT_API,
+                    "stream": True,
+                    "headers": redact(headers),
+                    "payload": payload,
+                },
             )
 
             # Curl Config
@@ -300,9 +318,23 @@ class AppChatReverse:
                         content[:500],
                         extra={"error_type": "UpstreamException"},
                     )
+                    write_debug_json(
+                        debug_pair_id,
+                        "error",
+                        {
+                            "provider": "grok-app-chat",
+                            "statusCode": response.status_code,
+                            "contentType": content_type,
+                            "body": content,
+                        },
+                    )
                     raise UpstreamException(
                         message=f"AppChatReverse: Chat failed, {response.status_code}",
-                        details={"status": response.status_code, "body": content},
+                        details={
+                            "status": response.status_code,
+                            "body": content,
+                            "debug_pair_id": debug_pair_id,
+                        },
                     )
 
                 return response
