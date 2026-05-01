@@ -43,6 +43,12 @@ class ImageGenerationService:
     """Image generation orchestration service."""
 
     @staticmethod
+    def _app_chat_mode_id(model_info: Any) -> str:
+        if getattr(model_info, "model_id", None) == "grok-imagine-1.0-fast":
+            return "fast"
+        return "auto"
+
+    @staticmethod
     def _app_chat_request_overrides(
         count: int,
         enable_nsfw: Optional[bool],
@@ -250,7 +256,7 @@ class ImageGenerationService:
         chat_format: bool = False,
     ) -> ImageGenerationResult:
         overrides = self._app_chat_request_overrides(n, enable_nsfw)
-        overrides["modeId"] = "auto"
+        overrides["modeId"] = self._app_chat_mode_id(model_info)
         response = await GrokChatService().chat(
             token=token,
             message=prompt,
@@ -290,7 +296,7 @@ class ImageGenerationService:
 
         async def _call_generate(call_target: int) -> List[str]:
             overrides = self._app_chat_request_overrides(call_target, enable_nsfw)
-            overrides["modeId"] = "auto"
+            overrides["modeId"] = self._app_chat_mode_id(model_info)
             response = await GrokChatService().chat(
                 token=token,
                 message=prompt,
