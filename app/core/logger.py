@@ -5,6 +5,7 @@
 import json
 import os
 import sys
+import threading
 import traceback
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ LOG_DIR = Path(os.getenv("LOG_DIR", str(DEFAULT_LOG_DIR)))
 DEFAULT_LOG_MAX_FILE_SIZE_MB = 100
 DEFAULT_LOG_MAX_FILES = 7
 _LOG_DIR_READY = False
+_LOGGER_RECONFIGURE_LOCK = threading.RLock()
 
 
 def _prepare_log_dir() -> bool:
@@ -100,6 +102,14 @@ def _patch_json_record(record) -> None:
     record["extra"]["_json_line"] = _format_json(record)
 
 
+def _complete_queued_logs() -> None:
+    """Best-effort drain queued Loguru messages before sink reconfiguration."""
+    try:
+        logger.complete()
+    except Exception:
+        pass
+
+
 def setup_logging(
     level: str = "DEBUG",
     json_console: bool = True,
@@ -107,67 +117,76 @@ def setup_logging(
     file_rotation_size_mb: int | None = None,
     file_retention_count: int | None = None,
 ):
-    """设置日志配置"""
-    logger.configure(patcher=_patch_json_record)
-    logger.remove()
-    file_logging = _env_flag("LOG_FILE_ENABLED", file_logging)
-    rotation_size_mb = _env_int(
-        "LOG_MAX_FILE_SIZE_MB",
-        DEFAULT_LOG_MAX_FILE_SIZE_MB
-        if file_rotation_size_mb is None
-        else int(file_rotation_size_mb),
-    )
-    retention_count = _env_int(
-        "LOG_MAX_FILES",
-        DEFAULT_LOG_MAX_FILES
-        if file_retention_count is None
-        else int(file_retention_count),
-    )
+    """
+    设置日志配置
 
-    # 控制台输出
-    if json_console:
-        logger.add(
-            sys.stdout,
-            level=level,
-            format="{extra[_json_line]}",
-            colorize=False,
-            backtrace=False,
-            diagnose=False,
+    @complexity MEDIUM
+    @ai_context Reconfigures Loguru sinks defensively during startup/runtime reloads.
+    @pure false
+    """
+    with _LOGGER_RECONFIGURE_LOCK:
+        _complete_queued_logs()
+        logger.configure(patcher=_patch_json_record)
+        logger.remove()
+        file_logging = _env_flag("LOG_FILE_ENABLED", file_logging)
+        file_enqueue = _env_flag("LOG_FILE_ENQUEUE", False)
+        rotation_size_mb = _env_int(
+            "LOG_MAX_FILE_SIZE_MB",
+            DEFAULT_LOG_MAX_FILE_SIZE_MB
+            if file_rotation_size_mb is None
+            else int(file_rotation_size_mb),
         )
-    else:
-        logger.add(
-            sys.stdout,
-            level=level,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file.name}:{line}</cyan> - <level>{message}</level>",
-            colorize=True,
-            backtrace=False,
-            diagnose=False,
+        retention_count = _env_int(
+            "LOG_MAX_FILES",
+            DEFAULT_LOG_MAX_FILES
+            if file_retention_count is None
+            else int(file_retention_count),
         )
 
-    # 文件输出
-    if file_logging:
-        if _prepare_log_dir():
-            file_kwargs: dict[str, Any] = {
-                "level": level,
-                "format": "{extra[_json_line]}",
-                "colorize": False,
-                "enqueue": True,
-                "encoding": "utf-8",
-                "backtrace": False,
-                "diagnose": False,
-            }
-            if rotation_size_mb > 0:
-                file_kwargs["rotation"] = rotation_size_mb * 1024 * 1024
-            if retention_count > 0:
-                file_kwargs["retention"] = retention_count
+        # 控制台输出
+        if json_console:
             logger.add(
-                str(LOG_DIR / "app_{time:YYYY-MM-DD}.log"),
-                **file_kwargs,
+                sys.stdout,
+                level=level,
+                format="{extra[_json_line]}",
+                colorize=False,
+                backtrace=False,
+                diagnose=False,
             )
         else:
-            logger.warning("File logging disabled: no writable log directory.")
+            logger.add(
+                sys.stdout,
+                level=level,
+                format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{file.name}:{line}</cyan> - <level>{message}</level>",
+                colorize=True,
+                backtrace=False,
+                diagnose=False,
+            )
 
-    return logger
+        # 文件输出
+        if file_logging:
+            if _prepare_log_dir():
+                file_kwargs: dict[str, Any] = {
+                    "level": level,
+                    "format": "{extra[_json_line]}",
+                    "colorize": False,
+                    "enqueue": file_enqueue,
+                    "encoding": "utf-8",
+                    "backtrace": False,
+                    "diagnose": False,
+                }
+                if rotation_size_mb > 0:
+                    file_kwargs["rotation"] = rotation_size_mb * 1024 * 1024
+                if retention_count > 0:
+                    file_kwargs["retention"] = retention_count
+                logger.add(
+                    str(LOG_DIR / "app_{time:YYYY-MM-DD}.log"),
+                    **file_kwargs,
+                )
+            else:
+                logger.warning("File logging disabled: no writable log directory.")
+
+        return logger
 
 
 def reload_logging_from_config(
