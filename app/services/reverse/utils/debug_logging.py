@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import uuid
@@ -10,18 +11,34 @@ from typing import Any
 
 import orjson
 
-from app.core.config import get_config
 from app.core.logger import logger
 from app.core.storage import DATA_DIR
 
 
 _SENSITIVE_KEYS = {"authorization", "cookie", "token", "sso", "sso-rw", "cf_clearance"}
 _TOKEN_RE = re.compile(r"(sso(?:-rw)?=|cf_clearance=)[^;\s]+", re.IGNORECASE)
+_TRUE_VALUES = {"1", "true", "yes", "on", "y"}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse an environment boolean flag with exact-name and uppercase support."""
+    raw = os.getenv(name)
+    if raw is None:
+        raw = os.getenv(name.upper())
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUE_VALUES
 
 
 def app_chat_debug_enabled() -> bool:
-    """Return whether app-chat debug artifacts should be persisted."""
-    return bool(get_config("debug.app_chat", True))
+    """
+    Return whether app-chat debug artifacts should be persisted.
+
+    @complexity LOW
+    @ai_context Env-only feature flag for sensitive app-chat debug artifacts.
+    @pure true
+    """
+    return _env_flag("debug_app_log", default=False)
 
 
 def new_debug_pair_id() -> str:
